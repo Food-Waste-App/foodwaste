@@ -73,11 +73,12 @@ function addProduct() {
   reader.onload = function(e) {
     const base64Image = e.target.result;
 
-    products.push({
+    const newProduct = {
       id: nextProductId++,
       businessName,
       city: b.city,
       district: b.district,
+      neighborhood: b.neighborhood,
       description,
       imageUrl: base64Image,
       oldPrice,
@@ -85,9 +86,17 @@ function addProduct() {
       type,
       stock,
       businessUsername: activeUser,
-    });
+      lat: b.lat,
+      lng: b.lng,
+    };
 
-    descriptionInput.value = "";
+    products.push(newProduct);
+
+    // Notify users within 5 km (in-app)
+    if (typeof notifyUsersNearProduct === "function") {
+      notifyUsersNearProduct(newProduct);
+    }
+descriptionInput.value = "";
     stockInput.value = "";
     fileInput.value = "";
     document.getElementById("oldPrice").value = "";

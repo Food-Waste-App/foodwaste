@@ -4,10 +4,18 @@
   .content-section{ padding: 16px; }
   header h1{ font-size: 18px; }
   .address-group{ flex-direction: column; }
+  .topbar-right{ flex-direction: column; align-items: stretch; }
+  .topbar-right .icon-btn,
+  .topbar-right .logout-btn{ width: 100% !important; }
 
   .address-group.address-3 {
     grid-template-columns: 1fr;
   }
 
   #scanVideo{ height: 240px; }
+}
+
+/* Profile form responsive */
+@media (max-width: 720px){
+  .form-grid{ grid-template-columns: 1fr; }
 }

@@ -2,10 +2,22 @@
    UI Navigation
    ========================= */
 function showPage(pageId) {
-  ["authSection", "userSection", "businessSection", "businessProfileSection"].forEach(
-    (id) => document.getElementById(id).classList.add("hidden")
-  );
-  document.getElementById(pageId).classList.remove("hidden");
+  // Hide all top-level sections before showing the requested one.
+  // Keep this list in sync with index.html sections.
+  [
+    "authSection",
+    "userSection",
+    "userProfileSection",
+    "userNotificationsSection",
+    "businessSection",
+    "businessProfileSection",
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add("hidden");
+  });
+
+  const target = document.getElementById(pageId);
+  if (target) target.classList.remove("hidden");
 }
 
 /* =========================
@@ -40,53 +52,64 @@ function setRole(role) {
 /* =========================
    Business register location selects
    ========================= */
-function fillRegisterCities() {
-  const citySel = document.getElementById("cityInput");
-  const distSel = document.getElementById("districtInput");
-  const neighSel = document.getElementById("neighborhoodInput");
+function fillLocationSelects(cityId, districtId, neighborhoodId) {
+  const citySel = document.getElementById(cityId);
+  const distSel = document.getElementById(districtId);
+  const neighSel = document.getElementById(neighborhoodId);
   if (!citySel || !distSel || !neighSel) return;
 
-  citySel.innerHTML = `<option value="">Select City</option>`;
-  Object.keys(TR_LOCATIONS).sort().forEach((city) => {
+  citySel.innerHTML = '<option value="">Select City</option>';
+  distSel.innerHTML = '<option value="">Select District</option>';
+  neighSel.innerHTML = '<option value="">Select Neighborhood</option>';
+
+  Object.keys(TR_LOCATIONS).forEach((city) => {
     const opt = document.createElement("option");
     opt.value = city;
-    opt.innerText = city;
+    opt.textContent = city;
     citySel.appendChild(opt);
   });
 
-  distSel.innerHTML = `<option value="">Select District</option>`;
-  neighSel.innerHTML = `<option value="">Select Neighborhood</option>`;
-
   citySel.onchange = () => {
-    const city = citySel.value;
-    distSel.innerHTML = `<option value="">Select District</option>`;
-    neighSel.innerHTML = `<option value="">Select Neighborhood</option>`;
-    if (!city || !TR_LOCATIONS[city]) return;
+    const c = citySel.value;
+    distSel.innerHTML = '<option value="">Select District</option>';
+    neighSel.innerHTML = '<option value="">Select Neighborhood</option>';
+    if (!c || !TR_LOCATIONS[c]) return;
 
-    Object.keys(TR_LOCATIONS[city]).sort().forEach((d) => {
+    Object.keys(TR_LOCATIONS[c]).forEach((dist) => {
       const opt = document.createElement("option");
-      opt.value = d;
-      opt.innerText = d;
+      opt.value = dist;
+      opt.textContent = dist;
       distSel.appendChild(opt);
     });
   };
 
   distSel.onchange = () => {
-    const city = citySel.value;
-    const dist = distSel.value;
-    neighSel.innerHTML = `<option value="">Select Neighborhood</option>`;
-    if (!city || !dist) return;
+    const c = citySel.value;
+    const d = distSel.value;
+    neighSel.innerHTML = '<option value="">Select Neighborhood</option>';
+    if (!c || !d || !TR_LOCATIONS[c] || !TR_LOCATIONS[c][d]) return;
 
-    const neighs = TR_LOCATIONS?.[city]?.[dist];
-    if (!neighs) return;
-
-    neighs.forEach((n) => {
+    TR_LOCATIONS[c][d].forEach((n) => {
       const opt = document.createElement("option");
       opt.value = n;
-      opt.innerText = n;
+      opt.textContent = n;
       neighSel.appendChild(opt);
     });
   };
+}
+
+/* =========================
+   Business register location selects
+   ========================= */
+function fillRegisterCities() {
+  fillLocationSelects("cityInput", "districtInput", "neighborhoodInput");
+}
+
+/* =========================
+   User register location selects
+   ========================= */
+function fillUserRegisterCities() {
+  fillLocationSelects("uCityInput", "uDistrictInput", "uNeighborhoodInput");
 }
 
 /* =========================
@@ -103,6 +126,14 @@ function renderAuthForm() {
       html += `
         <input type="text" id="nameInput" placeholder="Full Name">
         <input type="email" id="emailInput" placeholder="Gmail Address (must be @gmail.com)">
+
+        <input type="tel" id="phoneInput" placeholder="Phone (e.g. 05xxxxxxxxx)" inputmode="numeric" autocomplete="tel" maxlength="11">
+<div class="address-group address-3">
+          <select id="uCityInput"><option value="">Select City</option></select>
+          <select id="uDistrictInput"><option value="">Select District</option></select>
+          <select id="uNeighborhoodInput"><option value="">Select Neighborhood</option></select>
+        </div>
+        <input type="text" id="uAddressDetailInput" placeholder="Street + Building No (e.g., Atatürk Cd. No:12)">
       `;
     } else {
       html += `
@@ -144,6 +175,9 @@ function renderAuthForm() {
 
   if (authMode === "register" && authRole === "business") {
     fillRegisterCities();
+  }
+  if (authMode === "register" && authRole === "user") {
+    fillUserRegisterCities();
   }
 
   attachAuthLiveValidation();
@@ -284,7 +318,51 @@ function handleAuth() {
         return showFieldError(emailInput, "This Gmail address is already registered!", errorDiv);
       }
 
-      users[username] = { password, name, email };
+      
+      // Phone (required)
+      const phoneDigits = normalizePhone(phoneInput?.value || "");
+      if (!phoneDigits || !isValidTRPhoneDigits(phoneDigits)) {
+        return showFieldError(phoneInput, "Please enter a valid phone (e.g. 05xxxxxxxxx).", errorDiv);
+      }
+// Address (required for nearby notifications)
+      const uCitySel = document.getElementById("uCityInput");
+      const uDistSel = document.getElementById("uDistrictInput");
+      const uNeighSel = document.getElementById("uNeighborhoodInput");
+      const uAddrDetailInput = document.getElementById("uAddressDetailInput");
+
+      const uCity = (uCitySel?.value || "").toUpperCase();
+      const uDistrict = (uDistSel?.value || "").toUpperCase();
+      const uNeighborhood = (uNeighSel?.value || "").toUpperCase();
+      const uAddressDetail = (uAddrDetailInput?.value || "").trim();
+
+      if (!uCity || !TR_LOCATIONS[uCity]) {
+        return showFieldError(uCitySel, "Please select a valid city.", errorDiv);
+      }
+      if (!uDistrict || !TR_LOCATIONS[uCity][uDistrict]) {
+        return showFieldError(uDistSel, "Please select a valid district.", errorDiv);
+      }
+      if (!uNeighborhood || !TR_LOCATIONS[uCity][uDistrict].includes(uNeighborhood)) {
+        return showFieldError(uNeighSel, "Please select a valid neighborhood.", errorDiv);
+      }
+      if (!uAddressDetail || uAddressDetail.length < 5) {
+        return showFieldError(uAddrDetailInput, "Please enter street and building number (min 5 chars).", errorDiv);
+      }
+
+      const ll = deriveLatLngFromAddress(uCity, uDistrict, uNeighborhood);
+
+      users[username] = {
+        password,
+        name,
+        email,
+                phone: phoneDigits,
+city: uCity,
+        district: uDistrict,
+        neighborhood: uNeighborhood,
+        addressDetail: uAddressDetail,
+        lat: ll.lat,
+        lng: ll.lng,
+        notifications: []
+      };
       activeUser = username;
       activeRole = "user";
       alert("Registration successful!");
@@ -327,14 +405,21 @@ function handleAuth() {
         return showFieldError(usernameInput, "This business username already exists!", errorDiv);
       }
 
+      const bCity = city.toUpperCase();
+      const bDistrict = district.toUpperCase();
+      const bNeighborhood = neighborhood.toUpperCase();
+      const bll = deriveLatLngFromAddress(bCity, bDistrict, bNeighborhood);
+
       businesses[username] = {
         password,
         businessName: name,
-        city: city.toUpperCase(),
-        district: district.toUpperCase(),
-        neighborhood: neighborhood.toUpperCase(),
+        city: bCity,
+        district: bDistrict,
+        neighborhood: bNeighborhood,
         addressDetail,
         phone: phoneDigits,
+        lat: bll.lat,
+        lng: bll.lng,
       };
 
       activeUser = username;
@@ -371,6 +456,7 @@ function showUserSection(name) {
   renderProducts();
   renderCart();
   renderUserHistory();
+  updateNotifBadge();
 }
 
 function showBusinessSection(businessName) {

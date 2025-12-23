@@ -58,3 +58,11 @@ const TR_LOCATIONS = {
     "KARSIYAKA": ["BOSTANLI", "ALAYBEY", "MAVISEHIR"]
   }
 };
+
+// Approximate city centers (used to derive demo coordinates without external geocoding)
+const CITY_CENTERS = {
+  "ANKARA": { lat: 39.9334, lng: 32.8597 },
+  "ISTANBUL": { lat: 41.0082, lng: 28.9784 },
+  "IZMIR": { lat: 38.4237, lng: 27.1428 },
+};
+

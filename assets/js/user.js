@@ -621,3 +621,339 @@ document.addEventListener("DOMContentLoaded", () => {
   const typeSelect = document.getElementById("newProductType");
   if (typeSelect) typeSelect.value = "Donation";
 });
+
+
+/* =========================
+   User Profile + Map + Notifications
+   ========================= */
+
+let userMap = null;
+let userMarkersLayer = null;
+let userLocationMarker = null;
+
+function updateNotifBadge() {
+  const badge = document.getElementById("notifCount");
+  if (!badge) return;
+
+  if (activeRole !== "user" || !users?.[activeUser]) {
+    badge.textContent = "0";
+    return;
+  }
+  const n = Array.isArray(users[activeUser].notifications) ? users[activeUser].notifications.length : 0;
+  badge.textContent = String(n);
+}
+
+function renderNotifications() {
+  const list = document.getElementById("notifList");
+  if (!list) return;
+
+  const u = users?.[activeUser];
+  const notifs = (u && Array.isArray(u.notifications)) ? u.notifications : [];
+
+  if (notifs.length === 0) {
+    list.innerHTML = "<p>No notifications.</p>";
+    updateNotifBadge();
+    return;
+  }
+
+  list.innerHTML = notifs.map(n => {
+    const when = new Date(n.createdAt).toLocaleString();
+    return `
+      <div class="product" style="margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+          <strong>${n.type.replaceAll("_"," ").toUpperCase()}</strong>
+          <span class="muted" style="font-size:12px;">${when}</span>
+        </div>
+        <div style="margin-top:6px;">${n.message}</div>
+      </div>
+    `;
+  }).join("");
+
+  updateNotifBadge();
+}
+
+function clearNotifications() {
+  if (activeRole !== "user" || !users?.[activeUser]) return;
+  users[activeUser].notifications = [];
+  renderNotifications();
+  toast("Notifications cleared.", "info");
+}
+
+function openNotifications() {
+  if (activeRole !== "user") return;
+  showPage("userNotificationsSection");
+  renderNotifications();
+}
+
+function renderUserAddressCard() {
+  const card = document.getElementById("userAddressCard");
+  if (!card) return;
+
+  const u = users?.[activeUser];
+  if (!u) {
+    card.innerHTML = "<p>No user data.</p>";
+    return;
+  }
+
+  card.innerHTML = `
+    <div><strong>City:</strong> ${u.city || "-"}</div>
+    <div><strong>District:</strong> ${u.district || "-"}</div>
+    <div><strong>Neighborhood:</strong> ${u.neighborhood || "-"}</div>
+    <div><strong>Address:</strong> ${u.addressDetail || "-"}</div>
+    <div style="margin-top:8px;"><strong>Coordinates:</strong> ${Number(u.lat).toFixed(5)}, ${Number(u.lng).toFixed(5)}</div>
+  `;
+}
+
+function openUserProfile() {
+  if (activeRole !== "user") return;
+
+  const av = document.getElementById("userProfileAvatar");
+  const srcAv = document.getElementById("userAvatar");
+  if (av && srcAv) av.textContent = srcAv.textContent;
+
+  showPage("userProfileSection");
+  renderUserAddressCard();
+  renderNotifications();
+  initUserMap();
+  renderUserMapMarkers();
+}
+
+function resetDerivedLocation() {
+  if (activeRole !== "user" || !users?.[activeUser]) return;
+  const u = users[activeUser];
+  const ll = deriveLatLngFromAddress(u.city, u.district, u.neighborhood);
+  u.lat = ll.lat;
+  u.lng = ll.lng;
+  renderUserAddressCard();
+  if (userMap) {
+    userMap.setView([u.lat, u.lng], 13);
+    placeUserMarker(u.lat, u.lng);
+    renderUserMapMarkers();
+  }
+  toast("Location reset to saved address coordinate.", "info");
+}
+
+function requestBrowserLocation() {
+  if (!navigator.geolocation) {
+    toast("Geolocation is not supported in this browser.", "danger");
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      if (activeRole !== "user" || !users?.[activeUser]) return;
+      users[activeUser].lat = pos.coords.latitude;
+      users[activeUser].lng = pos.coords.longitude;
+
+      renderUserAddressCard();
+      initUserMap();
+      userMap.setView([users[activeUser].lat, users[activeUser].lng], 14);
+      placeUserMarker(users[activeUser].lat, users[activeUser].lng);
+      renderUserMapMarkers();
+      toast("Current location saved.", "success");
+    },
+    () => toast("Location permission denied.", "danger"),
+    { enableHighAccuracy: true, timeout: 8000 }
+  );
+}
+
+function initUserMap() {
+  const mapEl = document.getElementById("userMap");
+  if (!mapEl) return;
+
+  if (typeof L === "undefined") {
+    mapEl.innerHTML = "<p class='warning'>Map library (Leaflet) could not be loaded.</p>";
+    return;
+  }
+
+  const u = users?.[activeUser];
+  const lat = Number(u?.lat);
+  const lng = Number(u?.lng);
+
+  if (!userMap) {
+    userMap = L.map("userMap", { zoomControl: false }).setView(
+      [Number.isFinite(lat) ? lat : 39.9334, Number.isFinite(lng) ? lng : 32.8597],
+      12
+    );
+
+    // OSM tiles (tile colors are not fully controllable)
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 19
+    }).addTo(userMap);
+
+    // Custom zoom controls (palette)
+    const zoomWrap = L.control({ position: "topleft" });
+    zoomWrap.onAdd = () => {
+      const div = L.DomUtil.create("div", "leaflet-bar");
+      div.style.background = "rgba(242,232,207,.92)";
+      div.style.border = "1px solid rgba(56,102,65,.25)";
+      div.style.borderRadius = "12px";
+      div.style.overflow = "hidden";
+
+      const mkBtn = (label, fn) => {
+        const b = L.DomUtil.create("button", "", div);
+        b.type = "button";
+        b.textContent = label;
+        b.style.width = "36px";
+        b.style.height = "36px";
+        b.style.border = "none";
+        b.style.cursor = "pointer";
+        b.style.background = "transparent";
+        b.style.color = "rgb(56,102,65)";
+        b.style.fontWeight = "900";
+        b.onclick = (e) => { e.preventDefault(); fn(); };
+        return b;
+      };
+      mkBtn("+", () => userMap.zoomIn());
+      mkBtn("−", () => userMap.zoomOut());
+      L.DomEvent.disableClickPropagation(div);
+      return div;
+    };
+    zoomWrap.addTo(userMap);
+
+    userMarkersLayer = L.layerGroup().addTo(userMap);
+
+    userMap.on("click", (e) => {
+      if (activeRole !== "user" || !users?.[activeUser]) return;
+      users[activeUser].lat = e.latlng.lat;
+      users[activeUser].lng = e.latlng.lng;
+      placeUserMarker(e.latlng.lat, e.latlng.lng);
+      renderUserAddressCard();
+      renderUserMapMarkers();
+      toast("Location updated from map click.", "success");
+    });
+  }
+
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    placeUserMarker(lat, lng);
+  }
+}
+
+function placeUserMarker(lat, lng) {
+  if (!userMap || typeof L === "undefined") return;
+
+  if (userLocationMarker) userLocationMarker.remove();
+
+  userLocationMarker = L.circleMarker([lat, lng], {
+    radius: 9,
+    color: "#386641",
+    weight: 2,
+    fillColor: "#A7C957",
+    fillOpacity: 0.85
+  }).addTo(userMap).bindPopup("You are here").openPopup();
+}
+
+function renderUserMapMarkers() {
+  if (!userMap || !userMarkersLayer || activeRole !== "user") return;
+
+  userMarkersLayer.clearLayers();
+
+  const u = users?.[activeUser];
+  const uLat = Number(u?.lat);
+  const uLng = Number(u?.lng);
+  if (!Number.isFinite(uLat) || !Number.isFinite(uLng)) return;
+
+  const onlyNearby = document.getElementById("onlyNearbyToggle")?.checked ?? true;
+
+  const activeProducts = (products || []).filter(p => p.stock > 0 && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)));
+
+  activeProducts.forEach(p => {
+    const pLat = Number(p.lat);
+    const pLng = Number(p.lng);
+    const d = haversineKm(uLat, uLng, pLat, pLng);
+
+    if (onlyNearby && d > 5) return;
+
+    const marker = L.circleMarker([pLat, pLng], {
+      radius: 7,
+      color: "#386641",
+      weight: 2,
+      fillColor: "#6A994E",
+      fillOpacity: 0.85
+    });
+
+    marker.bindPopup(`
+      <strong>${p.description}</strong><br/>
+      ${p.businessName}<br/>
+      ${p.city} / ${p.district}<br/>
+      <strong>Distance:</strong> ${d.toFixed(1)} km
+    `);
+
+    marker.addTo(userMarkersLayer);
+  });
+}
+
+
+/* =========================
+   User Profile: Personal Info (editable)
+   ========================= */
+function renderUserProfileForm() {
+  if (activeRole !== "user") return;
+  const u = users?.[activeUser];
+  if (!u) return;
+
+  const nameInput = document.getElementById("profileNameInput");
+  const emailInput = document.getElementById("profileEmailInput");
+  const phoneInput = document.getElementById("profilePhoneInput");
+  const err = document.getElementById("userProfileError");
+
+  if (err) err.innerText = "";
+
+  if (nameInput) nameInput.value = u.name || "";
+  if (emailInput) emailInput.value = u.email || "";
+  if (phoneInput) phoneInput.value = u.phone || "";
+
+  // clear validation state
+  [nameInput, emailInput, phoneInput].filter(Boolean).forEach((inp) => setInputState(inp, ""));
+}
+
+function saveUserProfile() {
+  if (activeRole !== "user") return;
+  const u = users?.[activeUser];
+  if (!u) return;
+
+  const nameInput = document.getElementById("profileNameInput");
+  const emailInput = document.getElementById("profileEmailInput");
+  const phoneInput = document.getElementById("profilePhoneInput");
+  const err = document.getElementById("userProfileError");
+
+  const name = (nameInput?.value || "").trim();
+  const email = (emailInput?.value || "").trim().toLowerCase();
+  const phoneDigits = normalizePhone(phoneInput?.value || "");
+
+  if (!name || name.length < 2) {
+    showFieldError(nameInput, "Please enter your name (min 2 chars).", err);
+    return;
+  }
+  if (!email) {
+    showFieldError(emailInput, "Gmail is required.", err);
+    return;
+  }
+  if (!isValidGmail(email)) {
+    showFieldError(emailInput, "Please enter a valid Gmail address (@gmail.com).", err);
+    return;
+  }
+
+  const emailTaken = Object.entries(users || {}).some(([uname, user]) => {
+    return uname !== activeUser && (user?.email || "").toLowerCase() === email;
+  });
+  if (emailTaken) {
+    showFieldError(emailInput, "This Gmail address is already registered!", err);
+    return;
+  }
+
+  if (!phoneDigits || !isValidTRPhoneDigits(phoneDigits)) {
+    showFieldError(phoneInput, "Please enter a valid phone (e.g. 05xxxxxxxxx).", err);
+    return;
+  }
+
+  u.name = name;
+  u.email = email;
+  u.phone = phoneDigits;
+
+  // update welcome text on dashboard
+  const w = document.getElementById("userWelcome");
+  if (w) w.innerText = `Welcome, ${name}!`;
+
+  alert("Profile updated.");
+}
